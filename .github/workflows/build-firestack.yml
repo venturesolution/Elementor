@@ -4,10 +4,11 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-firestack:
+  build:
     runs-on: ubuntu-24.04
 
     steps:
+
       - name: Checkout Firestack
         uses: actions/checkout@v4
         with:
@@ -30,33 +31,126 @@ jobs:
 
       - name: Install NDK 28.2
         run: |
-          yes | sdkmanager --licenses || true
+          yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "ndk;28.2.13676358"
 
-      - name: Install gomobile
-        run: |
-          go install golang.org/x/mobile/cmd/gomobile@latest
-          go install golang.org/x/mobile/cmd/gobind@latest
-
-      - name: Build Firestack
+      - name: Prepare Firestack tools
         working-directory: firestack
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
         run: |
           export PATH="$(go env GOPATH)/bin:$PATH"
           export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
 
-          gomobile init
+          echo "=== Go ==="
+          go version
+
+          echo "=== NDK ==="
+          echo "$ANDROID_NDK_HOME"
+
+          echo "=== Register gomobile/gobind as Go tools ==="
+          go get -tool golang.org/x/mobile/cmd/gobind@latest
+
+          echo "=== go.mod tool directive ==="
+          grep -n -E '^(tool|require).*golang.org/x/mobile|golang.org/x/mobile' go.mod || true
+
+          echo "=== go mod tidy ==="
+          go mod tidy
+
+          echo "=== Verify x/mobile remains registered ==="
+          grep -n -E '^(tool|require).*golang.org/x/mobile|golang.org/x/mobile' go.mod || true
+
+      - name: Build Firestack
+        working-directory: firestack
+        run: |
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
 
           make android
 
       - name: Locate AAR
         run: |
-          find firestack -type f \( -name "*.aar" -o -name "libgojni.so" \) -print
+          echo "=== FIRESTACK AAR ==="
+          find firestack -type f -name "*.aar" -print
+
+          AAR=$(find firestack -type f -name "*.aar" | head -1)
+
+          if [ -z "$AAR" ]; then
+            echo "ERRO: AAR não encontrado"
+            exit 1
+          fi
+
+          echo "AAR encontrado:"
+          echo "$AAR"
+
+      - name: Extract and verify 16KB ELF alignment
+        run: |
+          set -e
+
+          AAR=$(find firestack -type f -name "*.aar" | head -1)
+
+          if [ -z "$AAR" ]; then
+            echo "ERRO: AAR não encontrado"
+            exit 1
+          fi
+
+          rm -rf verify
+          mkdir -p verify
+
+          unzip -q "$AAR" -d verify
+
+          LLVM_OBJDUMP="$ANDROID_SDK_ROOT/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objdump"
+
+          if [ ! -x "$LLVM_OBJDUMP" ]; then
+            echo "ERRO: llvm-objdump não encontrado"
+            exit 1
+          fi
+
+          echo "========================================"
+          echo " NATIVE LIBRARIES"
+          echo "========================================"
+
+          find verify -type f -name "*.so" -print
+
+          echo
+          echo "========================================"
+          echo " ELF LOAD ALIGNMENT"
+          echo "========================================"
+
+          FAILED=0
+
+          while IFS= read -r SO; do
+            echo
+            echo ">>> $SO"
+
+            OUTPUT=$("$LLVM_OBJDUMP" -p "$SO" | grep "LOAD" || true)
+
+            echo "$OUTPUT"
+
+            if echo "$OUTPUT" | grep -q "align 2\*\*12"; then
+              echo "ERRO: $SO ainda possui alinhamento de 4 KB!"
+              FAILED=1
+            fi
+
+            if echo "$OUTPUT" | grep -q "align 2\*\*14"; then
+              echo "OK: alinhamento de 16 KB detectado."
+            else
+              echo "AVISO: não foi detectado align 2**14."
+              FAILED=1
+            fi
+
+          done < <(find verify -type f -name "*.so")
+
+          echo
+          echo "========================================"
+
+          if [ "$FAILED" -ne 0 ]; then
+            echo "FALHA: uma ou mais bibliotecas não estão alinhadas em 16 KB."
+            exit 1
+          fi
+
+          echo "SUCESSO: todas as bibliotecas ELF estão alinhadas em 16 KB."
 
       - name: Upload Firestack AAR
         uses: actions/upload-artifact@v4
         with:
           name: firestack-16kb-aar
-          path: |
-            firestack/**/*.aar
+          path: firestack/**/*.aar
