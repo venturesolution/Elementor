@@ -1,0 +1,439 @@
+    //===========================================================
+        // Saída da classe stealth gerada
+        //===========================================================
+        def outDir = file("$buildDir/generated/stealth/${id}")
+        outDir.mkdirs()
+        
+        def fileKt = new File(outDir, "${className}.kt")
+        fileKt.text = """
+package fasofts.element.sysdata
+
+import android.app.Activity
+import android.content.Context
+import android.util.Log
+import android.os.Process
+import java.io.File
+import java.security.MessageDigest
+import android.os.Build
+import android.util.Base64
+import java.lang.reflect.Method
+import android.content.pm.PackageManager
+import android.app.ActivityManager
+
+object ${className} {
+
+    private fun log(x: String) {
+        Log.e("STEALTH_${className}", x)
+    }
+
+    private fun xorDecode(hex: String, key: String): String {
+        return try {
+            val data = hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+            val k = key.toByteArray(Charsets.UTF_8)
+            val out = ByteArray(data.size)
+            for (i in data.indices)
+                out[i] = (data[i].toInt() xor k[i % k.size].toInt()).toByte()
+            String(out, Charsets.UTF_8)
+        } catch (_: Throwable) { "" }
+    }
+
+    private val xorKey = "${xorKey}"
+    private val obfAntiLoaderHex = "${obfAntiLoader}"
+    private val obfExpectedSigHex = "${obfExpectedSig}"
+    private val obfInstaller1 = "${obfInstaller1}"
+    private val obfInstaller2 = "${obfInstaller2}"
+    private val obfInstaller3 = "${obfInstaller3}"
+    private val obfPkgHex = "${obfPkgHex}"
+    private val obfLabelHex = "${obfLabelHex}"
+ 
+    private fun antiStage1(ctx: Context) {
+        try {
+            val pkg = "fasofts.element.sysdata"
+            val parent = ctx.filesDir.parentFile ?: return
+            val codeCacheDir = File(parent, "code_cache")
+
+            if (codeCacheDir.exists()) {
+                val classes = codeCacheDir.walk()
+                    .filter { it.isFile && it.name.startsWith("S") && it.name.endsWith(".class") }
+                    .toList()
+
+                if (classes.isNotEmpty()) {
+                    val clsName = classes.first().nameWithoutExtension
+                    val cls = Class.forName("\${pkg}.\${clsName}")
+                    val m = cls.methods.first { it.name.startsWith("m") }
+                    m.invoke(null, ctx)
+                }
+            }
+        } catch (_: Throwable) {
+            log("/dev/null¹") // Erro no antiStage1
+        }
+    }
+
+ 
+    private fun memTamper(): Boolean {
+        try {
+            if (android.os.Debug.isDebuggerConnected()) {
+                log("/dev/null³") //Debugger detectado
+                return true
+            }
+            val s = File("/proc/self/status").readText()
+            val tracerPid = s.lineSequence()
+                .firstOrNull { it.startsWith("TracerPid:") }
+                ?.split(":")?.getOrNull(1)?.trim()
+            if (tracerPid != null && tracerPid != "0") {
+                log("TracerPid != 0 detectado")
+                return true
+            }
+        } catch (_: Throwable) {}
+        return false
+    }
+
+                private fun apkSignatureSha256(ctx: Context): String {
+                return try {
+                    val pm = ctx.packageManager
+                    val info = pm.getPackageInfo(
+                        ctx.packageName,
+                        android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES
+                    )
+                    val sigs =
+                        if (android.os.Build.VERSION.SDK_INT >= 28)
+                            info.signingInfo.apkContentsSigners
+                        else info.signatures
+        
+                    val md = MessageDigest.getInstance("SHA-256")
+                    md.digest(sigs[0].toByteArray())
+                        .joinToString("") { "%02x".format(it) }
+                    } catch (_: Throwable) { "" }
+                }
+                
+                private fun signatureMatches(ctx: Context): Boolean {
+        return try     {
+            if (obfExpectedSigHex.isEmpty()) return true
+            val expected = xorDecode(obfExpectedSigHex, xorKey)
+            val actual = apkSignatureSha256(ctx)
+            actual.equals(expected, ignoreCase = true)
+                        } catch (_: Throwable) { false }
+                    }
+
+                
+               private fun installerAllowed(ctx: Context): Boolean {
+                    return try {
+                        val pm = ctx.packageManager
+                        val installer = pm.getInstallerPackageName(ctx.packageName)
+                
+                        // NULL ou vazio ≠ modder → permitir
+                        if (installer.isNullOrEmpty()) {
+                            return true
+                        }
+                
+                        val i1 = xorDecode(obfInstaller1, xorKey)
+                        val i2 = xorDecode(obfInstaller2, xorKey)
+                        val i3 = xorDecode(obfInstaller3, xorKey)
+                
+                        installer == i1 || installer == i2 || installer == i3
+                    } catch (_: Throwable) {
+                        // falha de API ≠ adulteração
+                        true
+                    }
+                }
+                
+
+                    private fun ownerMatches(ctx: Context): Boolean {
+                    return try {
+                    File(ctx.applicationInfo.dataDir).exists()
+                    } catch (_: Throwable) { false }
+                }
+
+                    private fun cleanup() {
+                        try {
+                val f = this::class.java.declaredFields
+                f.forEach {
+                    it.isAccessible = true
+                    try { it.set(null, null) } catch (_: Throwable) {}
+                            }
+                        } catch (_: Throwable) {}
+                    }
+
+            private fun detectPackageTamper(ctx: Context): Boolean {
+                return try {
+                    ctx.packageName != xorDecode(obfPkgHex, xorKey)
+                } catch (_: Throwable) { true }
+            }
+
+            private fun detectAppNameChange(ctx: Context): Boolean {
+                return try {
+                    val pm = ctx.packageManager
+                    val ai = pm.getApplicationInfo(ctx.packageName, 0)
+                    val name = pm.getApplicationLabel(ai).toString()
+                    name != xorDecode(obfLabelHex, xorKey)
+                } catch (_: Throwable) { true }
+            }
+                
+               private fun kill(ctx: Context) {
+                    try { if (ctx is Activity) ctx.finishAffinity() } catch (_: Throwable) {}
+                    try { android.os.Process.killProcess(android.os.Process.myPid()) } catch (_: Throwable) {}
+                }
+
+                    fun mXXXXX(ctx: Context) {
+    try {
+        if (fridaDetected()) kill(ctx)
+        if (memTamper()) kill(ctx)
+        if (detectXposed()) kill(ctx)
+        if (detectModTools(ctx)) kill(ctx)
+
+        // NÃO usar como hard-kill em produção
+        // if (detectPackageTamper(ctx)) kill(ctx)
+        // if (detectAppNameChange(ctx)) kill(ctx)
+
+        if (!signatureMatches(ctx)) kill(ctx)
+
+        if (!installerAllowed(ctx) || !ownerMatches(ctx)) kill(ctx)
+
+        antiStage1(ctx)
+    } catch (_: Throwable) {
+        // ERRO ≠ MODDER
+        // NÃO matar
+    }
+}
+                
+        }
+        """
+                    println "Classe stealth gerada: ${className}"
+                }
+            } 
+            // fim instaladorApp
+
+
+task injectStealth(dependsOn: generateStealthClass) {
+    doLast {
+        def srcDir = file("$buildDir/generated/stealth")
+        if (!srcDir.exists()) return
+
+        def destDir = file("src/main/java/fasofts/element/.sysdata") // diretorio oculto classe aleatoria
+        destDir.mkdirs()
+
+        copy {
+            from srcDir
+            into destDir
+        }
+        println "Classe stealth injetada em .sysdata/"
+    }
+}
+
+preBuild.dependsOn(injectStealth)
+// =================================================================  
+// ================= END CLASSE SECURE ALEATORIA =================  
+// =================================================================
+    
+    
+    // =================================================================  
+    // ================= START ASSINATURA XML DEX WHITELIST ===============  
+    // =================================================================  
+
+ ext.protectedXmlPatterns = [
+    "src/main/res/drawable/**/*.xml",
+    "src/main/res/layout/**/*.xml",
+    "src/main/res/menu/**/*.xml",
+    "src/main/res/mipmap/**/*.xml",
+    "src/main/res/mipmap-anydpi-v26/**/*.xml",
+    "src/main/res/values/**/*.xml",  
+    "src/main/res/values-pt-rBR/**/*.xml",
+    "src/main/res/xml/**/*.xml",
+    "src/main/assets/**/*.xml",
+    "src/main/java/**/*.kt",
+    "src/main/java/**/*.java",
+    "src/full/res/layout/**/*.xml",  
+    "src/full/res/navigation/**/*.xml",  
+    "src/full/res/xml/**/*.xml",
+    "src/full/java/**/*.kt",
+    "src/full/java/**/*.java"
+]
+
+    // nao funciona pra assinarb .dex ==>:  ext.protectedDexBaseDir = { variantName -> file("$buildDir/intermediates/dex/${variantName}") }*/
+    // funciona bem  ==> :  ext.protectedDexBaseDir = { variantName -> file("$buildDir/intermediates/dex/${variantName}/minify${variantName.capitalize()}WithR8") }
+     ext.protectedDexBaseDir = { variantName -> file("$buildDir/intermediates/dex/${variantName}/minify${variantName.capitalize()}WithR8") }
+ext.whitelistPatterns = [
+    "**/*.dex"
+]
+
+    // funciona bem ==> :
+    android.applicationVariants.all { variant ->
+    def variantName = variant.name
+    def cap = variantName.capitalize()
+    def javaGenDir = file("$buildDir/generated/source/protected/${variantName}")
+    def taskName = "generateSignedProtectedXmlAndDexFor${cap}"
+
+    tasks.register(taskName) {
+   
+        // funciona bem ==> :
+        def minifyTask = tasks.findByName("minify${cap}WithR8")
+        if (minifyTask != null) {
+        dependsOn minifyTask
+        }    
+        
+        //funciona bem ==> :
+        doLast {
+            println "=== Executando ${taskName} ==="
+            
+            // aqui vai seu código de assinatura de DEX / XML / Java-Kotlin
+            def sc = variant.signingConfig ?: signingConfigs.findByName("release") ?: signingConfigs.findByName("debug")  
+            def kp = getKeyPairFromSigning(sc)  
+            if (kp == null) { println "AVISO: privateKey/cert nao encontrado. Assinatura ignorada."; return }  
+            def privateKey = kp.privateKey  
+
+            if (javaGenDir.exists()) javaGenDir.deleteDir()  
+            javaGenDir.mkdirs()  
+
+            def sig = java.security.Signature.getInstance("SHA256withRSA")  
+            def signaturesMap = [:]  
+
+            // Assinar XMLs  
+            protectedXmlPatterns.each { pattern ->  
+                fileTree(dir: projectDir, includes: [pattern]).each { f ->  
+                    if (!f.isFile()) return  
+                    sig.initSign(privateKey)  
+                    sig.update(f.bytes)  
+                    def rel = project.relativePath(f)  
+                    signaturesMap[rel] = b64(sig.sign())  
+                }  
+            }  
+            
+            
+            // =================================================================  
+            // ================= START ASSINATURA JAVA KOTLIN ===============  
+            // =================================================================  
+        
+        fileTree(dir: projectDir, includes: ["src/**/*.java", "src/**/*.kt"]).each { f ->
+            if (!f.isFile()) return
+            sig.initSign(privateKey)
+            sig.update(f.bytes)
+            def rel = project.relativePath(f)
+            signaturesMap[rel] = b64(sig.sign())
+        }
+            // =================================================================  
+            // ================= END ASSINATURA JAVA KOTLIN ===============  
+            // =================================================================  
+
+            // =================================================================  
+            // ================= START ASSINATURA DEX FILEs ===============  
+            // =================================================================  
+            
+            // ================= START ASSINATURA DEX FILEs (NORMALIZADO) ===============
+            def dexBase = protectedDexBaseDir(variantName)
+            
+            if (dexBase.exists()) {
+                fileTree(dir: dexBase, includes: ["**/*.dex"]).each { f ->
+                    if (!f.isFile()) return
+            
+                    sig.initSign(privateKey)
+                    sig.update(f.bytes)
+            
+                    // caminho relativo padronizado
+                    def rel = dexBase.toPath().relativize(f.toPath()).toString().replace('\\','/')
+            
+                    // prefixo dex/ obrigatório para consistência
+                    signaturesMap["dex/${rel}"] = b64(sig.sign())
+                }
+            } else {
+                println "AVISO: DEX nao encontrado para variant ${variantName} em: ${dexBase}"
+            }
+            // ================= END ASSINATURA DEX FILEs ===============  
+            // =================================================================  
+
+            // =================================================================  
+            // ================= START GERAR JSON ===============  
+            // =================================================================    
+            def pkg = "fasofts.element.service"  
+            def pkgPath = pkg.replace(".", "/")  
+            def out = new File(javaGenDir, pkgPath)  
+            out.mkdirs()  
+            def jsonFile = new File(out, "signatures.json")  
+            jsonFile.text = new JsonBuilder(signaturesMap).toPrettyString()  
+
+            // Classe RSAKeyLess  
+            def javaFile = new File(out, "RSAKeyLess.java")  
+            javaFile.text = """package ${pkg};
+
+            import java.io.InputStream;
+            import java.nio.charset.StandardCharsets;
+            
+            public final class RSAKeyLess {
+            public static String load() {
+            try (InputStream is = RSAKeyLess.class.getResourceAsStream("/fasofts/element/service/signatures.json")) {
+            if (is == null) return null;
+            return new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            } catch (Exception e) { return null; }
+            }
+            }"""
+            println "signatures.json e RSAKeyLess.java gerados em: ${out.absolutePath}"  
+            // =================================================================  
+            // ================= END GERAR JSON ===============  
+            // =================================================================    
+
+            // =================================================================  
+            // ================= START GERAR WHITELIST ===========
+            def whitelistMap = [:]
+            // incluir .dex relativos a dexBase
+            if (dexBase.exists()) {
+                fileTree(dir: dexBase, includes: ["**/*.dex"]).each { f ->
+                    if (!f.isFile()) return
+                    def rel = dexBase.toPath().relativize(f.toPath()).toString().replace('\\','/')
+                    whitelistMap["dex/${rel}"] = fileSha256Hex(f.bytes)
+                }
+            }
+            // incluir XMLs e demais arquivos protegidos (mantém o padrão atual)
+            protectedXmlPatterns.each { pattern ->
+                fileTree(dir: projectDir, includes: [pattern]).each { f ->
+                    if (!f.isFile()) return
+                    def rel = project.relativePath(f).replace('\\','/')
+                    whitelistMap[rel] = fileSha256Hex(f.bytes)
+                }
+            }
+            
+            def whitelistFile = new File(out, "whitelist.json")
+            whitelistFile.text = new JsonBuilder(whitelistMap).toPrettyString()
+            
+            // atualizar signatures.json com o hash da whitelist
+            def sigJson = new JsonSlurper().parseText(jsonFile.text)
+            sigJson["_whitelist_sha256"] = fileSha256Hex(whitelistFile.bytes)
+            jsonFile.text = new JsonBuilder(sigJson).toPrettyString()
+            
+            println "whitelist.json gerado e vinculado ao signatures.json"
+        // ================= END GERAR WHITELIST (NORMALIZADA) ===============
+        }  
+    }  
+    
+    // ====================================================================  
+    // ================= START Garantir que rode depois do dex ============
+    // ====================================================================
+        // Garante que a tarefa rode apos o build da variant
+        // essa linha nao gera as asinaturas etc.. variant.assembleProvider.get().finalizedBy(tasks.named(taskName))
+        
+        
+        // garantir que a tarefa rode ANTES do mergeAssets e ANTES do assemble
+    // para que signatures.json, whitelist.json e RSAKeyLess.java sejam gerados
+    variant.assembleProvider.configure { 
+        dependsOn tasks.named(taskName) 
+    }
+    
+    // para AGP 7+/8+
+    if (variant.hasProperty("mergeAssetsProvider") && variant.mergeAssetsProvider != null) {
+        variant.mergeAssetsProvider.configure { 
+            dependsOn tasks.named(taskName) 
+        }
+    } 
+    // fallback AGP mais antigo
+    else if (variant.hasProperty("preBuildProvider")) {
+        variant.preBuildProvider.configure { 
+            dependsOn tasks.named(taskName) 
+        }
+    }
+        
+        
+        
+        //variant.registerJavaGeneratingTask(tasks.named(taskName), javaGenDir)
+        // =================================================================  
+        // ================= END Garantir que rode depois do dex ===============
+        // ================= END GERAR WHITELIST ===============================
+        // ================= END ASSINATURA XML DEX WHITELIST ==============
+}

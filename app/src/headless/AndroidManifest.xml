@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="fasofts.element">
+
+    <permission
+        android:name="fasofts.element.CONTROL_VPN"
+        android:protectionLevel="normal" />
+
+    <application android:name=".RethinkDnsApplication">
+        <provider
+            android:name=".provider.ApplicationProvider"
+            android:authorities="fasofts.element.appprovider"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="fasofts.element.CONTROL_VPN" />
+        <provider
+            android:name=".provider.BlocklistProvider"
+            android:authorities="fasofts.element.blocklistprovider"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="fasofts.element.CONTROL_VPN" />
+        <provider
+            android:name=".provider.DomainRuleProvider"
+            android:authorities="fasofts.element.domainrulesprovider"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="fasofts.element.CONTROL_VPN" />
+
+        <receiver
+            android:name=".receiver.BraveStartReceiver"
+            android:exported="true"
+            android:permission="fasofts.element.CONTROL_VPN">
+            <intent-filter>
+                <action android:name="fasofts.element.intent.action.START_VPN" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

@@ -1,0 +1,39 @@
+.gradle/
+build/
+element16kb/
+local.properties
+
+*.apk
+*.aab
+*.apks
+
+*.jks
+*.keystore
+*.pem
+*.pk8
+key.properties
+google-services.json
+
+.idea/
+*.iml
+
+.externalNativeBuild/
+.cxx/
+captures/
+
+.androidide/
+
+bootstrap_apksigner.sh/
+
+installNdk.sh/
+
+botstrap_apksigner.sh/
+
+# Signing keys - NEVER commit
+key/
+
+# Large generated asset - do not commit
+app/src/headless/assets/td.txt
+
+# Large asset - kept locally, not committed
+app/src/headless/assets/td.txt

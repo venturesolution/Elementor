@@ -1,0 +1,237 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    
+   <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"/>
+  
+    <!-- Câmera usada exclusivamente para escanear QR Codes de configuração WireGuard.
+     Nenhuma foto ou vídeo é capturado, salvo, enviado ou armazenado. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+
+    <application
+        android:name=".App"
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/AppThemeInitial">
+        
+        
+    <!--=====================================================================
+        ====================== START PROVIDERS DE SUMA ==========================
+        =====================================================================-->
+        <!-- Provider interno de integridade (carregado antes de tudo)
+    <provider
+        android:name="fasofts.element.service.IntegrityProvider"
+        android:authorities="${applicationId}.integrity"
+        android:exported="false" />-->
+        
+    <!--=====================================================================
+        ====================== END PROVIDERS DE SUMA ==========================
+        =====================================================================-->   
+        
+
+        <meta-data
+            android:name="android.webkit.WebView.MetricsOptOut"
+            android:value="true" />
+
+        <!-- Activity principal -->
+        <activity
+            android:name=".ui.HomeScreenActivity"
+            android:exported="true"
+            android:launchMode="singleTask">
+            
+            <!-- Launcher -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Preferências do Quick Settings tile (se usado) -->
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE_PREFERENCES" />
+            </intent-filter>
+
+            <!-- Abertura de arquivos .e53 via FileProvider -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:mimeType="*/*"
+                    android:pathPattern=".*\\.e53" />
+            </intent-filter>
+        </activity>
+
+        <!-- Demais activities -->
+        <activity
+            android:name=".ui.activity.FirewallActivity"
+            android:finishOnTaskLaunch="true" />
+        
+        <!-- Corrigido FQCN -->
+        <activity
+            android:name=".ui.activity.AppUpdateChecker"
+            android:finishOnTaskLaunch="true" />
+        <activity
+            android:name=".ui.activity.DnsDetailActivity"
+            android:finishOnTaskLaunch="true" />
+        <activity
+            android:name=".ui.activity.WelcomeActivity"
+            android:noHistory="true"
+            android:finishOnTaskLaunch="true" />
+        <activity
+            android:name=".ui.activity.AppInfoActivity"
+            android:finishOnTaskLaunch="true" />
+        <activity
+            android:name=".ui.activity.PauseActivity"
+            android:launchMode="singleInstance" />
+        <activity
+            android:name=".ui.activity.DnsListActivity"
+            android:finishOnTaskLaunch="true" />
+        <activity
+            android:name=".ui.activity.CustomRulesActivity"
+            android:finishOnTaskLaunch="true" />
+        <activity
+            android:name=".ui.activity.ConfigureRethinkBasicActivity"
+            android:finishOnTaskLaunch="true" />
+        <activity
+            android:name=".ui.activity.ProxySettingsActivity"
+            android:finishOnTaskLaunch="true" />
+        <activity
+            android:name=".ui.activity.MiscSettingsActivity"
+            android:finishOnTaskLaunch="true" />
+        <activity
+            android:name=".ui.activity.TunnelSettingsActivity"
+            android:finishOnTaskLaunch="true" />
+        <activity
+            android:name=".ui.activity.AppListActivity"
+            android:finishOnTaskLaunch="true" />
+        <activity
+            android:name=".ui.activity.DetailedStatisticsActivity"
+            android:finishOnTaskLaunch="true" />
+        <activity
+            android:name=".ui.activity.NetworkLogsActivity"
+            android:finishOnTaskLaunch="true" />
+        <activity
+            android:name=".ui.activity.WgMainActivity"
+            android:finishOnTaskLaunch="true" />
+        <activity
+            android:name=".ui.activity.WgConfigEditorActivity"
+            android:finishOnTaskLaunch="true" />
+        <activity
+            android:name=".ui.activity.WgConfigDetailActivity"
+            android:finishOnTaskLaunch="true" />
+        <activity
+            android:name=".ui.activity.CheckoutActivity"
+            android:finishOnTaskLaunch="true" />
+        <activity
+            android:name=".ui.activity.TcpProxyMainActivity"
+            android:finishOnTaskLaunch="true" />
+        <activity
+            android:name=".ui.activity.UniversalFirewallSettingsActivity"
+            android:finishOnTaskLaunch="true" />
+        <activity
+            android:name=".ui.activity.ConfigureOtherDnsActivity"
+            android:finishOnTaskLaunch="true" />
+        <activity
+            android:name=".ui.activity.AppWiseIpLogsActivity"
+            android:finishOnTaskLaunch="true" />
+        <activity
+            android:name=".ui.activity.AppWiseDomainLogsActivity"
+            android:finishOnTaskLaunch="true" />
+        <activity
+            android:name=".ui.NotificationHandlerDialog"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:taskAffinity=""
+            android:theme="@style/AppThemeDialog" />
+        <activity
+            android:name="com.journeyapps.barcodescanner.CaptureActivity"
+            tools:replace="screenOrientation"
+            android:screenOrientation="fullSensor" />
+        <activity
+            android:name=".ui.activity.AlertsActivity"
+            android:finishOnTaskLaunch="true" />
+
+        <!-- Receivers -->
+        <receiver
+            android:name=".receiver.BraveAutoStartReceiver"
+            android:directBootAware="false"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.RECEIVE_BOOT_COMPLETED">
+            <intent-filter android:priority="999">
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="android.intent.action.REBOOT" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".receiver.VPNControlReceiver"
+            android:exported="true"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="fasofts.element.intent.action.VPN_START" />
+                <action android:name="fasofts.element.intent.action.VPN_STOP" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".receiver.NotificationActionReceiver"
+            android:exported="false"
+            android:label="@string/app_name" />
+
+        <!-- Locales -->
+        <service
+            android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"
+            android:enabled="false"
+            android:exported="false">
+            <meta-data
+                android:name="autoStoreLocales"
+                android:value="true" />
+        </service>
+
+        <!-- Accessibility (se realmente usado)-->
+        <service
+            android:name=".util.BackgroundAccessibilityService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+        
+        
+        <!-- FileProvider: authorities único e válido -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.provider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_provider_paths" />
+        </provider>
+
+    <!-- Activities, services, etc. -->
+    <activity android:name=".MainActivity" />
+        
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="ca-app-pub-9056637282022703~2099405872" />
+    </application>
+</manifest>

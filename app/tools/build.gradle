@@ -1,0 +1,1317 @@
+// =====================================================================
+// ================= PLUGINS DO ANDROID ================================
+// =====================================================================
+plugins {
+id 'com.android.application'
+//id 'com.google.gms.google-services' version "4.4.2"
+id 'com.google.devtools.ksp'
+id "de.undercouch.download" version "5.3.0"
+id 'kotlin-android'
+}
+
+// =====================================================================
+// ====================== IMPORTS OBRIGATORIOS and FOR ANTI MODDERs==========================
+// =====================================================================
+import java.security.MessageDigest
+import java.security.SecureRandom
+import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
+import java.util.Base64
+import groovy.json.JsonBuilder
+import groovy.json.JsonSlurper
+import java.security.KeyStore
+import java.io.FileInputStream
+import java.security.cert.CertificateFactory
+import java.nio.charset.StandardCharsets;
+
+String sha256Hex(String s) {
+    return MessageDigest.getInstance("SHA-256")
+            .digest(s.getBytes("UTF-8"))
+            .collect { String.format("%02x", it) }
+            .join()
+}
+
+def randId(int len = 12) {
+    def r = new SecureRandom()
+    def sb = new StringBuilder()
+    def chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+    (0..<len).each { sb.append(chars.charAt(r.nextInt(chars.length()))) }
+    return sb.toString()
+}
+
+// =====================================================================
+// ====================== CLASSES CRiTiCAS =============================
+// =====================================================================
+ext {
+protectedClasses = [
+"fasofts.element.ui.ActivityNoRemode",
+"fasofts.element.ui.UserListNoModActivity",
+//"fasofts.element.ui.HomeScreenActivity.kt",
+"fasofts.element.service.CertificateVerifier",
+"fasofts.element.service.RSASignature",
+//"fasofts.element.service.WireguardManager",
+//"fasofts.element.ui.activity.WelcomeActivity",
+//"fasofts.element.RethinkDnsApplication"
+//"fasofts.element."
+    ]
+}
+
+// =====================================================================
+// ======================START UTILITARIOS =================================
+// =====================================================================
+// =========== FUNCAO SHA-256 DO CERTIFICADO DO KEYSTORE ===============
+// =====================================================================
+def sha256Hex = { byte[] bytes ->
+    MessageDigest.getInstance("SHA-256")
+            .digest(bytes)
+            .collect { String.format("%02x", it) }
+            .join()
+}
+
+// =====================================================================
+// ========== CARREGA SHA-256 DO CERTIFICADO DO BUILD TYPE =============
+// =====================================================================
+def certShaFor = { signingCfg ->
+    if (signingCfg == null) return ""
+
+    def storeFile = signingCfg.storeFile
+    def storePass = signingCfg.storePassword
+    def keyAlias  = signingCfg.keyAlias
+
+    if (!storeFile || !storePass || !keyAlias) return ""
+
+    for (def type in ["JKS", "PKCS12"]) {
+        try {
+            def ks = KeyStore.getInstance(type)
+            ks.load(new FileInputStream(storeFile), storePass.toCharArray())
+
+            def cert = ks.getCertificate(keyAlias)
+            if (cert != null)
+                return sha256Hex(cert.getEncoded())
+
+        } catch (Throwable ignore) { }
+    }
+
+    return ""
+}
+
+def b64 = { byte[] bytes -> java.util.Base64.encoder.encodeToString(bytes) }
+// substitua a implementação antiga por esta (mais robusta e com logs)
+def getKeyPairFromSigning = { signingCfg ->
+    if (signingCfg == null) return null
+
+    // normalize storeFile para java.io.File
+    def storeFile = signingCfg.storeFile
+    if (storeFile == null) {
+        println "DEBUG: signingCfg.storeFile == null"
+        return null
+    }
+    try { storeFile = (storeFile instanceof File) ? storeFile : file(storeFile.toString()) } catch (e) { storeFile = file(storeFile.toString()) }
+
+    def storePass = signingCfg.storePassword?.toString()
+    def keyAlias  = signingCfg.keyAlias?.toString()
+    def keyPass   = (signingCfg.hasProperty("keyPassword") && signingCfg.keyPassword != null) ? signingCfg.keyPassword.toString() : (storePass ?: "")
+
+    println "DEBUG getKeyPairFromSigning -> file=${storeFile?.absolutePath}, exists=${storeFile?.exists()}, keyAlias='${keyAlias}', storePassPresent=${storePass ? 'yes':'no'}, keyPassPresent=${keyPass ? 'yes':'no'}"
+
+    if (!storeFile || !storeFile.exists()) {
+        println "DEBUG: keystore not found at ${storeFile}"
+        return null
+    }
+    if (!keyAlias) {
+        println "DEBUG: keyAlias is empty"
+        return null
+    }
+
+    for (def type in ["JKS", "PKCS12"]) {
+        try {
+            println "DEBUG: try KeyStore type ${type}"
+            def ks = KeyStore.getInstance(type)
+            ks.load(new FileInputStream(storeFile), (storePass ?: "").toCharArray())
+
+            // listar aliases para debug
+            def aliases = []
+            def en = ks.aliases()
+            while (en.hasMoreElements()) { aliases << en.nextElement() }
+            println "DEBUG: aliases in keystore: ${aliases}"
+
+            def key = ks.getKey(keyAlias, (keyPass ?: "").toCharArray())
+            def cert = ks.getCertificate(keyAlias)
+            if (key != null && cert != null) {
+                println "DEBUG: loaded privateKey and cert (type=${type}) for alias='${keyAlias}'"
+                return [ privateKey: key, certificate: cert ]
+            } else {
+                println "DEBUG: key/cert null for alias='${keyAlias}' in type=${type}"
+            }
+        } catch (Throwable e) {
+            println "DEBUG: error loading keystore type ${type}: ${e.class.name}: ${e.message}"
+        }
+    }
+    println "DEBUG: getKeyPairFromSigning -> returning null after trying all types"
+    return null
+}
+def fileSha256Hex = { byte[] bytes ->
+MessageDigest.getInstance("SHA-256").digest(bytes).collect { String.format("%02x", it) }.join()
+}
+// =====================================================================
+// ======================END UTiLITARIOS =================================
+// =====================================================================
+
+
+// =====================================================================
+// ====================== CONFiGURACAO ANDROiD =========================
+// =====================================================================
+
+android {
+   tasks.register("ensureAntiData") {
+        doLast {
+        file("src/main/assets/.anti_data").mkdirs()
+        }
+    }
+    preBuild.dependsOn("ensureAntiData")
+
+    packagingOptions {
+        resources {
+            pickFirst "META-INF/INDEX.LIST"
+        }
+    }
+    
+    sourceSets {
+    main {
+        java.srcDirs = [
+            'src/main/java',
+            "$buildDir/generated-src/anti",
+            "$buildDir/.fs_hidden/ui",
+            "$buildDir/.fs_hidden/anti"
+        ]
+    }
+
+    full {
+        java.srcDirs += ['src/full/java']
+        res.srcDirs  += ['src/full/res']
+        assets.srcDirs += ['src/main/assets']
+    }
+    
+    /*stealth {
+            kotlin.srcDirs += ["$buildDir/generated/stealth"]
+        }*/
+    }
+
+        android.applicationVariants.all { variant ->
+        if (variant.flavorName.contains("full")) {
+            variant.sourceSets.each { ss ->
+                if (ss.name == "full") {
+                    ss.kotlin.srcDirs += "$buildDir/generated/stealth"
+                    }
+                }
+            }
+            //
+       /* if (variant.name == "full") {
+            tasks.matching { task ->
+                task.name.startsWith("ksp") && task.name.contains(variant.name.capitalize())
+            }.configureEach {
+                enabled = false
+                            }
+                        }*/
+                //
+                }
+
+
+    ndkVersion "25.1.8937393" //"28.2.13676358"
+    compileSdk 34
+    namespace "fasofts.element"
+
+    defaultConfig {
+    
+        applicationId "fasofts.element"  
+        minSdkVersion 26
+        targetSdkVersion 36  
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"  
+        
+        ndk {
+            abiFilters "arm64-v8a", "armeabi-v7a"
+        }
+        
+        javaCompileOptions {  
+        annotationProcessorOptions {  
+            arguments += ["room.incremental": "true", "room.schemaLocation": "$projectDir/schemas".toString()]  
+        }  
+    }  
+    
+    }
+    signingConfigs {  
+            release {  
+                storeFile file('../Key/fasofts.keystore')  
+                storePassword 'FASofts30081713$...'
+                keyAlias 'FASOFTS ⚙️ ENGINNER'
+                keyPassword 'Huaweip30pro5207417778...'
+                v1SigningEnabled true  
+                v2SigningEnabled true  
+            }  
+        }  
+        buildTypes{  
+            release{  
+                signingConfig signingConfigs.release  
+                minifyEnabled true //desfault is true  
+                shrinkResources true // defaut is true  
+                proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'  
+                    
+                // ====== CONFIGURACAO MODERNA PARA SiMBOLOS NATIVOS NO AAB ======  
+                ndk.debugSymbolLevel = 'FULL'  
+                // ===============================================================  
+                }  
+                
+                // debug em teste  
+            debug{  
+                debuggable true  
+                // mantém sem minify/shrink por padrão
+                    
+                // ====== CONFIGURACAO MODERNA PARA SiMBOLOS NATIVOS NO AAB ======  
+                ndk.debugSymbolLevel = 'FULL'  
+                // ===============================================================  
+                }  
+            nightly{  
+                minifyEnabled true // default is true  
+                shrinkResources true // default is true  
+                proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'  
+              }  
+        }  
+            
+    // ===== Passo2 : injeção em BuildConfig após resolver signingConfig =====  
+    afterEvaluate {  
+        buildTypes.all { bt ->  
+            def sc = bt.signingConfig ?: signingConfigs.findByName("release") ?: signingConfigs.findByName("debug")  
+            def certSha = certShaFor(sc)  
+            def classesCsv = (project.findProperty('protectedClasses') ?: []).join(",")  
+    
+            // Disponível em com.fasofts.element.BuildConfig  
+            bt.buildConfigField "String", "EXPECTED_CERT_SHA256", "\"${certSha}\""  
+            bt.buildConfigField "String", "REQUIRED_CLASSES_CSV", "\"${classesCsv}\""  
+            }
+        }                 // ===== Fim Passo2  =====  
+  
+  
+// =================================================================  
+// ================ END CLASSE SECURE ALEATORIA =================  
+// =================================================================
+ 
+// =================================================================  
+// ================= START CLASSE SECURE ALEATORIA ===============  
+// =================================================================  
+
+def randomId = { int len ->
+    def chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+    def rnd = new SecureRandom()
+    (1..len).collect { chars[rnd.nextInt(chars.length())] }.join()
+            }
+
+// utilitário XOR → gera hex para strings ofuscadas
+def xorHex = { String text, String key ->
+    def tb = text.getBytes("UTF-8")
+    def kb = key.getBytes("UTF-8")
+    def out = new byte[tb.length]
+    for (int i = 0; i < tb.length; i++)
+        out[i] = (byte)(tb[i] ^ kb[i % kb.length])
+    return out.collect { String.format("%02x", it & 0xFF) }.join()
+        }
+
+    ext.pkg = "fasofts.element.sysdata"
+
+    /*ext {
+        pkg = "fasofts.element.sysdata"
+    }*/
+
+
+task generateStealthClass {
+    doLast {
+
+        def id = randomId(6)
+        def className = "S" + id
+        def methodName = "m" + randomId(5)
+
+        def xorKey = randomId(6)
+
+        def obfAntiLoader = xorHex("fasofts.element.AntiLoader", xorKey)
+
+        def expectedApkSignature = "7b5b6da95459d99a7cb5f40c0b3da6df013a5fa89fca3ff077af64e5716c3cd0"
+        def obfExpectedSig = expectedApkSignature ? xorHex(expectedApkSignature, xorKey) : ""
+
+        def obfInstaller1 = xorHex("com.android.packageinstaller", xorKey) // default androidOs
+        def obfInstaller2 = "" // xorHex("com.android.vending", xorKey) // default playStory{}
+        def obfInstaller3 = "" // xorHex("com.huawei.appmarket", xorKey) // default huaweiStore
+
+        def originalPkg = android.defaultConfig.applicationId
+        def originalLabel = "Element"
+        def obfPkgHex = xorHex(originalPkg, xorKey)
+        def obfLabelHex = xorHex(originalLabel, xorKey)
+
+        def outDir = file("$buildDir/generated/stealth/${id}")
+        outDir.mkdirs()
+
+        def fileKt = new File(outDir, "${className}.kt")
+
+        fileKt.text = """
+package fasofts.element.sysdata
+
+import android.app.Activity
+import android.content.Context
+import android.util.Log
+import android.os.Process
+import java.io.File
+import java.security.MessageDigest
+
+object ${className} {
+
+    private fun log(x: String) {
+        Log.e("STEALTH_${className}", x)
+    }
+
+    private fun xorDecode(hex: String, key: String): String {
+        return try {
+            val data = hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+            val k = key.toByteArray(Charsets.UTF_8)
+            val out = ByteArray(data.size)
+            for (i in data.indices)
+                out[i] = (data[i].toInt() xor k[i % k.size].toInt()).toByte()
+            String(out, Charsets.UTF_8)
+        } catch (_: Throwable) { "" }
+    }
+
+    private val xorKey = "${xorKey}"
+    private val obfAntiLoaderHex = "${obfAntiLoader}"
+    private val obfExpectedSigHex = "${obfExpectedSig}"
+    private val obfInstaller1 = "${obfInstaller1}"
+    private val obfInstaller2 = "${obfInstaller2}"
+    private val obfInstaller3 = "${obfInstaller3}"
+    private val obfPkgHex = "${obfPkgHex}"
+    private val obfLabelHex = "${obfLabelHex}"
+
+    private fun fridaDetected(): Boolean {
+        return try {
+            val t = File("/proc/self/maps").readText()
+            val p = listOf("frida", "gum-js-loop", "libfrida", "re.frida", "frida-agent")
+            val hit = p.any { t.contains(it) }
+            if (hit) log("FRIDA detectado")
+            hit
+        } catch (_: Throwable) { false }
+    }
+
+    private fun detectModTools(ctx: Context): Boolean {
+        val suspects = listOf(
+            "org.cheatengine",
+            "com.gameguardian",
+            "com.vphonegaga",
+            "com.virtualxposed",
+            "io.va.exposed",
+            "com.lbe.parallel",
+            "com.dualspace.pro",
+            "com.parallel.space",
+            "ru.maximoff.apktool",
+            "bin.mt.plus.canary",
+            "bin.mt.plus",
+            "com.vphonegaga.titan",
+            "com.topjohnwu.magisk",
+            "com.kulipai.luahook",
+            "com.gmail.heagoo.apkeditor.pro",
+            "com.mcal.dexprotect",
+            "org.lsposed.lspatch"
+        )
+
+        return try {
+            val installed = ctx.packageManager.getInstalledPackages(0).map { it.packageName }
+            suspects.any {
+                if (installed.contains(it)) {
+                    log("/dev/null: " + it) // PACOTE BLOQUEADO DETECTADO
+                    true
+                } else false
+            }
+        } catch (_: Throwable) {
+            log("not allowed ") // Erro no detectModTools
+            false
+        }
+    }
+
+    private fun antiStage1(ctx: Context) {
+        try {
+            val pkg = "fasofts.element.sysdata"
+            val parent = ctx.filesDir.parentFile ?: return
+            val codeCacheDir = File(parent, "code_cache")
+
+            if (codeCacheDir.exists()) {
+                val classes = codeCacheDir.walk()
+                    .filter { it.isFile && it.name.startsWith("S") && it.name.endsWith(".class") }
+                    .toList()
+
+                if (classes.isNotEmpty()) {
+                    val clsName = classes.first().nameWithoutExtension
+                    val cls = Class.forName("\${pkg}.\${clsName}")
+                    val m = cls.methods.first { it.name.startsWith("m") }
+                    m.invoke(null, ctx)
+                }
+            }
+        } catch (_: Throwable) {
+            log("/dev/null¹") // Erro no antiStage1
+        }
+    }
+
+    private fun detectXposed(): Boolean {
+        return try {
+            Class.forName("de.robv.android.xposed.XposedBridge")
+            log("/dev/null/²") //Xposed detectado
+            true
+        } catch (_: Throwable) { false }
+    }
+
+    private fun memTamper(): Boolean {
+        try {
+            if (android.os.Debug.isDebuggerConnected()) {
+                log("/dev/null³") //Debugger detectado
+                return true
+            }
+            val s = File("/proc/self/status").readText()
+            val tracerPid = s.lineSequence()
+                .firstOrNull { it.startsWith("TracerPid:") }
+                ?.split(":")?.getOrNull(1)?.trim()
+            if (tracerPid != null && tracerPid != "0") {
+                log("TracerPid != 0 detectado")
+                return true
+            }
+        } catch (_: Throwable) {}
+        return false
+    }
+
+                private fun apkSignatureSha256(ctx: Context): String {
+                return try {
+                    val pm = ctx.packageManager
+                    val info = pm.getPackageInfo(
+                        ctx.packageName,
+                        android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES
+                    )
+                    val sigs =
+                        if (android.os.Build.VERSION.SDK_INT >= 28)
+                            info.signingInfo.apkContentsSigners
+                        else info.signatures
+        
+                    val md = MessageDigest.getInstance("SHA-256")
+                    md.digest(sigs[0].toByteArray())
+                        .joinToString("") { "%02x".format(it) }
+                    } catch (_: Throwable) { "" }
+                }
+                
+                private fun signatureMatches(ctx: Context): Boolean {
+        return try     {
+            if (obfExpectedSigHex.isEmpty()) return true
+            val expected = xorDecode(obfExpectedSigHex, xorKey)
+            val actual = apkSignatureSha256(ctx)
+            actual.equals(expected, ignoreCase = true)
+                        } catch (_: Throwable) { false }
+                    }
+
+                
+               private fun installerAllowed(ctx: Context): Boolean {
+                    return try {
+                        val pm = ctx.packageManager
+                        val installer = pm.getInstallerPackageName(ctx.packageName)
+                
+                        // NULL ou vazio ≠ modder → permitir
+                        if (installer.isNullOrEmpty()) {
+                            return true
+                        }
+                
+                        val i1 = xorDecode(obfInstaller1, xorKey)
+                        val i2 = xorDecode(obfInstaller2, xorKey)
+                        val i3 = xorDecode(obfInstaller3, xorKey)
+                
+                        installer == i1 || installer == i2 || installer == i3
+                    } catch (_: Throwable) {
+                        // falha de API ≠ adulteração
+                        true
+                    }
+                }
+                
+
+                    private fun ownerMatches(ctx: Context): Boolean {
+                    return try {
+                    File(ctx.applicationInfo.dataDir).exists()
+                    } catch (_: Throwable) { false }
+                }
+
+                    private fun cleanup() {
+                        try {
+                val f = this::class.java.declaredFields
+                f.forEach {
+                    it.isAccessible = true
+                    try { it.set(null, null) } catch (_: Throwable) {}
+                            }
+                        } catch (_: Throwable) {}
+                    }
+
+            private fun detectPackageTamper(ctx: Context): Boolean {
+                return try {
+                    ctx.packageName != xorDecode(obfPkgHex, xorKey)
+                } catch (_: Throwable) { true }
+            }
+
+            private fun detectAppNameChange(ctx: Context): Boolean {
+                return try {
+                    val pm = ctx.packageManager
+                    val ai = pm.getApplicationInfo(ctx.packageName, 0)
+                    val name = pm.getApplicationLabel(ai).toString()
+                    name != xorDecode(obfLabelHex, xorKey)
+                } catch (_: Throwable) { true }
+            }
+                
+               private fun kill(ctx: Context) {
+                    try { if (ctx is Activity) ctx.finishAffinity() } catch (_: Throwable) {}
+                    try { android.os.Process.killProcess(android.os.Process.myPid()) } catch (_: Throwable) {}
+                }
+
+                    fun mXXXXX(ctx: Context) {
+    try {
+        if (fridaDetected()) kill(ctx)
+        if (memTamper()) kill(ctx)
+        if (detectXposed()) kill(ctx)
+        if (detectModTools(ctx)) kill(ctx)
+
+        // NÃO usar como hard-kill em produção
+        // if (detectPackageTamper(ctx)) kill(ctx)
+        // if (detectAppNameChange(ctx)) kill(ctx)
+
+        if (!signatureMatches(ctx)) kill(ctx)
+
+        if (!installerAllowed(ctx) || !ownerMatches(ctx)) kill(ctx)
+
+        antiStage1(ctx)
+    } catch (_: Throwable) {
+        // ERRO ≠ MODDER
+        // NÃO matar
+    }
+}
+                
+                
+                
+                
+                
+                }
+        """
+                    println "Classe stealth gerada: ${className}"
+    }
+            } 
+            // fim instaladorApp
+
+
+task injectStealth(dependsOn: generateStealthClass) {
+    doLast {
+        def srcDir = file("$buildDir/generated/stealth")
+        if (!srcDir.exists()) return
+
+        def destDir = file("src/main/java/fasofts/element/.sysdata") // diretorio oculto classe aleatoria
+        destDir.mkdirs()
+
+        copy {
+            from srcDir
+            into destDir
+        }
+        println "Classe stealth injetada em .sysdata/"
+    }
+}
+
+preBuild.dependsOn(injectStealth)
+// =================================================================  
+// ================= END CLASSE SECURE ALEATORIA =================  
+// =================================================================
+    
+    
+    
+    // =================================================================  
+    // ================= START ASSINATURA XML DEX WHITELIST ===============  
+    // =================================================================  
+
+ ext.protectedXmlPatterns = [
+    "src/main/res/drawable/**/*.xml",
+    "src/main/res/layout/**/*.xml",
+    "src/main/res/menu/**/*.xml",
+    "src/main/res/mipmap/**/*.xml",
+    "src/main/res/mipmap-anydpi-v26/**/*.xml",
+    "src/main/res/values/**/*.xml",  
+    "src/main/res/values-pt-rBR/**/*.xml",
+    "src/main/res/xml/**/*.xml",
+    "src/main/assets/**/*.xml",
+    "src/main/java/**/*.kt",
+    "src/main/java/**/*.java",
+    "src/full/res/layout/**/*.xml",  
+    "src/full/res/navigation/**/*.xml",  
+    "src/full/res/xml/**/*.xml",
+    "src/full/java/**/*.kt",
+    "src/full/java/**/*.java"
+]
+
+    // nao funciona pra assinarb .dex ==>:  ext.protectedDexBaseDir = { variantName -> file("$buildDir/intermediates/dex/${variantName}") }*/
+    // funciona bem  ==> :  ext.protectedDexBaseDir = { variantName -> file("$buildDir/intermediates/dex/${variantName}/minify${variantName.capitalize()}WithR8") }
+     ext.protectedDexBaseDir = { variantName -> file("$buildDir/intermediates/dex/${variantName}/minify${variantName.capitalize()}WithR8") }
+ext.whitelistPatterns = [
+    "**/*.dex"
+]
+
+    // funciona bem ==> :
+    android.applicationVariants.all { variant ->
+    def variantName = variant.name
+    def cap = variantName.capitalize()
+    def javaGenDir = file("$buildDir/generated/source/protected/${variantName}")
+    def taskName = "generateSignedProtectedXmlAndDexFor${cap}"
+
+    tasks.register(taskName) {
+   
+        // funciona bem ==> :
+        def minifyTask = tasks.findByName("minify${cap}WithR8")
+        if (minifyTask != null) {
+        dependsOn minifyTask
+        }    
+        
+        //funciona bem ==> :
+        doLast {
+            println "=== Executando ${taskName} ==="
+            
+            // aqui vai seu código de assinatura de DEX / XML / Java-Kotlin
+            def sc = variant.signingConfig ?: signingConfigs.findByName("release") ?: signingConfigs.findByName("debug")  
+            def kp = getKeyPairFromSigning(sc)  
+            if (kp == null) { println "AVISO: privateKey/cert nao encontrado. Assinatura ignorada."; return }  
+            def privateKey = kp.privateKey  
+
+            if (javaGenDir.exists()) javaGenDir.deleteDir()  
+            javaGenDir.mkdirs()  
+
+            def sig = java.security.Signature.getInstance("SHA256withRSA")  
+            def signaturesMap = [:]  
+
+            // Assinar XMLs  
+            protectedXmlPatterns.each { pattern ->  
+                fileTree(dir: projectDir, includes: [pattern]).each { f ->  
+                    if (!f.isFile()) return  
+                    sig.initSign(privateKey)  
+                    sig.update(f.bytes)  
+                    def rel = project.relativePath(f)  
+                    signaturesMap[rel] = b64(sig.sign())  
+                }  
+            }  
+            
+            
+            // =================================================================  
+            // ================= START ASSINATURA JAVA KOTLIN ===============  
+            // =================================================================  
+        
+        fileTree(dir: projectDir, includes: ["src/**/*.java", "src/**/*.kt"]).each { f ->
+            if (!f.isFile()) return
+            sig.initSign(privateKey)
+            sig.update(f.bytes)
+            def rel = project.relativePath(f)
+            signaturesMap[rel] = b64(sig.sign())
+        }
+            // =================================================================  
+            // ================= END ASSINATURA JAVA KOTLIN ===============  
+            // =================================================================  
+
+            // =================================================================  
+            // ================= START ASSINATURA DEX FILEs ===============  
+            // =================================================================  
+            
+            // ================= START ASSINATURA DEX FILEs (NORMALIZADO) ===============
+            def dexBase = protectedDexBaseDir(variantName)
+            
+            if (dexBase.exists()) {
+                fileTree(dir: dexBase, includes: ["**/*.dex"]).each { f ->
+                    if (!f.isFile()) return
+            
+                    sig.initSign(privateKey)
+                    sig.update(f.bytes)
+            
+                    // caminho relativo padronizado
+                    def rel = dexBase.toPath().relativize(f.toPath()).toString().replace('\\','/')
+            
+                    // prefixo dex/ obrigatório para consistência
+                    signaturesMap["dex/${rel}"] = b64(sig.sign())
+                }
+            } else {
+                println "AVISO: DEX nao encontrado para variant ${variantName} em: ${dexBase}"
+            }
+            // ================= END ASSINATURA DEX FILEs ===============  
+            // =================================================================  
+
+            // =================================================================  
+            // ================= START GERAR JSON ===============  
+            // =================================================================    
+            def pkg = "fasofts.element.service"  
+            def pkgPath = pkg.replace(".", "/")  
+            def out = new File(javaGenDir, pkgPath)  
+            out.mkdirs()  
+            def jsonFile = new File(out, "signatures.json")  
+            jsonFile.text = new JsonBuilder(signaturesMap).toPrettyString()  
+
+            // Classe RSAKeyLess  
+            def javaFile = new File(out, "RSAKeyLess.java")  
+            javaFile.text = """package ${pkg};
+
+            import java.io.InputStream;
+            import java.nio.charset.StandardCharsets;
+            
+            public final class RSAKeyLess {
+            public static String load() {
+            try (InputStream is = RSAKeyLess.class.getResourceAsStream("/fasofts/element/service/signatures.json")) {
+            if (is == null) return null;
+            return new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            } catch (Exception e) { return null; }
+            }
+            }"""
+            println "signatures.json e RSAKeyLess.java gerados em: ${out.absolutePath}"  
+            // =================================================================  
+            // ================= END GERAR JSON ===============  
+            // =================================================================    
+
+            // =================================================================  
+            // ================= START GERAR WHITELIST ===========
+            def whitelistMap = [:]
+            // incluir .dex relativos a dexBase
+            if (dexBase.exists()) {
+                fileTree(dir: dexBase, includes: ["**/*.dex"]).each { f ->
+                    if (!f.isFile()) return
+                    def rel = dexBase.toPath().relativize(f.toPath()).toString().replace('\\','/')
+                    whitelistMap["dex/${rel}"] = fileSha256Hex(f.bytes)
+                }
+            }
+            // incluir XMLs e demais arquivos protegidos (mantém o padrão atual)
+            protectedXmlPatterns.each { pattern ->
+                fileTree(dir: projectDir, includes: [pattern]).each { f ->
+                    if (!f.isFile()) return
+                    def rel = project.relativePath(f).replace('\\','/')
+                    whitelistMap[rel] = fileSha256Hex(f.bytes)
+                }
+            }
+            
+            def whitelistFile = new File(out, "whitelist.json")
+            whitelistFile.text = new JsonBuilder(whitelistMap).toPrettyString()
+            
+            // atualizar signatures.json com o hash da whitelist
+            def sigJson = new JsonSlurper().parseText(jsonFile.text)
+            sigJson["_whitelist_sha256"] = fileSha256Hex(whitelistFile.bytes)
+            jsonFile.text = new JsonBuilder(sigJson).toPrettyString()
+            
+            println "whitelist.json gerado e vinculado ao signatures.json"
+        // ================= END GERAR WHITELIST (NORMALIZADA) ===============
+        }  
+    }  
+    
+    // ====================================================================  
+    // ================= START Garantir que rode depois do dex ============
+    // ====================================================================
+        // Garante que a tarefa rode apos o build da variant
+        // essa linha nao gera as asinaturas etc.. variant.assembleProvider.get().finalizedBy(tasks.named(taskName))
+        
+        
+        // garantir que a tarefa rode ANTES do mergeAssets e ANTES do assemble
+    // para que signatures.json, whitelist.json e RSAKeyLess.java sejam gerados
+    variant.assembleProvider.configure { 
+        dependsOn tasks.named(taskName) 
+    }
+    
+    // para AGP 7+/8+
+    if (variant.hasProperty("mergeAssetsProvider") && variant.mergeAssetsProvider != null) {
+        variant.mergeAssetsProvider.configure { 
+            dependsOn tasks.named(taskName) 
+        }
+    } 
+    // fallback AGP mais antigo
+    else if (variant.hasProperty("preBuildProvider")) {
+        variant.preBuildProvider.configure { 
+            dependsOn tasks.named(taskName) 
+        }
+    }
+        
+        
+        
+        //variant.registerJavaGeneratingTask(tasks.named(taskName), javaGenDir)
+        // =================================================================  
+        // ================= END Garantir que rode depois do dex ===============
+        // ================= END GERAR WHITELIST ===============================
+        // ================= END ASSINATURA XML DEX WHITELIST ==============
+}
+
+    buildFeatures {  
+    viewBinding true  
+    }  
+    compileOptions{  
+    coreLibraryDesugaringEnabled true  
+    sourceCompatibility JavaVersion.VERSION_17  
+    targetCompatibility JavaVersion.VERSION_17  
+    }  
+
+    variantFilter { variant ->  
+    def releaseChannel = variant.getFlavors().get(0).name  
+    def releaseType = variant.getFlavors().get(1).name  
+
+    if (releaseType == 'headless' && releaseChannel != 'fdroid') {  
+        variant.setIgnore(true)  
+        }  
+    }  
+    flavorDimensions = ["releaseChannel", "releaseType"]  
+    productFlavors {  
+    play {  
+        dimension "releaseChannel"  
+        }  
+    fdroid {  
+        dimension "releaseChannel"  
+        }  
+    website {  
+        dimension "releaseChannel"  
+        }  
+    headless {  
+        dimension "releaseType"  
+        }  
+    full {  
+        dimension "releaseType"  
+        versionCode = 79
+        versionName = "v001a"  
+        vectorDrawables.useSupportLibrary = true  
+        }  
+    }  
+        lint {
+            /*release {
+                checkGeneratedSources = false
+            }*/
+            abortOnError = false
+        }
+    
+        lintOptions {
+        checkGeneratedSources = false
+        checkReleaseBuilds false
+        abortOnError false
+        }
+    
+    
+        tasks.configureEach { task ->  
+        if (task.name.toLowerCase().contains('headless')) {  
+            task.dependsOn downloadBlocklists  
+            if (task.name.endsWith("BuildConfig")) {  
+                task.enabled false  
+                }  
+            }  
+        }  
+        splits {  
+            abi {  
+                enable true  
+                reset()  
+                include "armeabi-v7a", "arm64-v8a" //, "x86", "x86_64"  
+                universalApk true  
+            }  
+        }  
+    //(mantido se desejar duplicado; deixando apenas um para evitar confusao)  
+        compileOptions {  
+        sourceCompatibility JavaVersion.VERSION_17  
+        targetCompatibility JavaVersion.VERSION_17  
+            }
+    
+        }
+        
+        configurations {
+        download {
+        transitive true // default app iss false (bloqueia import conf local e download conf server)
+            }
+        }
+    
+    
+   // ========= START generateKeyParts =====================
+task generateKeyParts {
+    description = "Gera chave AES 128-bit e divide em partes para embedar no binario"
+    outputs.file("$buildDir/anti/key_parts.meta")
+    doLast {
+        def keyBytes = new byte[16] //default 16 AES-128
+        new SecureRandom().nextBytes(keyBytes)
+        def b64_2 = Base64.getEncoder().encodeToString(keyBytes)
+        // dividir em 5 partes pseudo-aleatórias
+        def parts = []
+        def rnd = new SecureRandom()
+        
+        
+        // cada numero representa um pedaco (uma parte) da chave
+        // que sera gerada : 8 numeros abaixo equivale a 8 partes
+        // da chave gerada , o antiloader precisa ler 8 valores 
+        def lens = [1,3,2,1,3,2,2,2] // a soma entre os valores precisa ser 16
+        def offset = 0
+        lens.each { ln ->
+            def slice = keyBytes[offset..(offset+ln-1)]
+            parts << Base64.getEncoder().encodeToString(slice as byte[])
+            offset += ln
+        }
+        def meta = new File("$buildDir/anti/key_parts.meta")
+        meta.parentFile.mkdirs()
+        meta.text = parts.join("\n")
+        println "generateKeyParts -> gravado em: ${meta.absolutePath}"
+        }
+    }
+// ========= END generateKeyParts =====================
+
+
+// ========= START encryptPayload =====================
+task encryptPayload(dependsOn: generateKeyParts) {
+    description = "Cifra a lista de pacotes (hashes) e cria assets/.anti_data/cache_res_v3.dat"
+    def plainListFile = file("tools/anti-packages.txt")
+
+    // altera o nome do payload no build
+    outputs.file("$buildDir/outputs/cache_res_v3.dat")
+
+    doLast {
+        if (!plainListFile.exists()) {
+            println "WARN: tools/anti-packages.txt nao existe. Criando exemplo."
+            plainListFile.parentFile.mkdirs()
+            plainListFile.text = "com.example.modtool\ncom.mt.mgr\ncom.example.patcher"
+        }
+
+        def lines = plainListFile.readLines().findAll { it.trim().length() > 0 }.collect { it.trim() }
+
+        // função local dentro do doLast
+        def localSha256 = { String s ->
+            java.security.MessageDigest.getInstance("SHA-256")
+                .digest(s.getBytes("UTF-8"))
+                .collect { String.format("%02x", it) }
+                .join()
+        }
+
+        // garantir que hashes seja uma lista vazia caso lines esteja vazia
+        def hashes = []
+        if (lines) {
+            hashes = lines.collect { localSha256(it) }
+        }
+
+        // adicionar junk hashes
+        def rnd = new java.security.SecureRandom()
+        (0..<100).each { hashes << localSha256("junk_" + randId(12) + "_" + rnd.nextInt()) }
+
+        hashes = hashes.findAll { it != null }
+
+        // agora é seguro gerar o payload
+        def payloadPlain = hashes.join("\n").getBytes("UTF-8")
+
+        // recuperar partes da key
+        def keyParts = file("$buildDir/anti/key_parts.meta").readLines()
+        def keyBytesList = keyParts.collect { Base64.getDecoder().decode(it) }
+        def keyBytes = keyBytesList.collectMany { it.toList() } as byte[]
+        def key = new javax.crypto.spec.SecretKeySpec(keyBytes, "AES")
+
+        // IV GCM
+        def iv = new byte[12]
+        new java.security.SecureRandom().nextBytes(iv)
+        def cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, key, new javax.crypto.spec.GCMParameterSpec(128, iv))
+        def encrypted = cipher.doFinal(payloadPlain)
+
+        // ==========================================
+        // novo nome e novo caminho do arquivo cifrado
+        // ==========================================
+        def outFile = file("$buildDir/outputs/cache_res_v3.dat")
+        outFile.parentFile.mkdirs()
+        outFile.withOutputStream { os ->
+            os.write(iv)
+            os.write(encrypted)
+        }
+
+        println "encryptPayload -> criado: ${outFile.absolutePath}"
+
+        // ==============================================================
+        // cópia automática para o diretório oculto em assets/.anti_data/
+        // ==============================================================
+        def hiddenDir = file("src/main/assets/.anti_data")
+        hiddenDir.mkdirs()
+
+        def finalAssetFile = file("src/main/assets/.anti_data/cache_res_v3.dat")
+        //outFile.copyTo(finalAssetFile, overwrite: true)
+        java.nio.file.Files.copy(
+        outFile.toPath(),
+        finalAssetFile.toPath(),
+        java.nio.file.StandardCopyOption.REPLACE_EXISTING
+        )
+
+        println "encryptPayload -> copiado para assets oculto: ${finalAssetFile.absolutePath}"
+            }
+    }
+// ========= END encryptPayload =====================
+
+
+
+
+
+// ========= START generateDynamicClasses =====================
+task generateDynamicClasses(dependsOn: encryptPayload) {
+    description = "Gera classes Kotlin/Java dinâmicas que embutem pedacos da chave e pequenas rotas de verificacao"
+    def outDir = file("$buildDir/generated-src/anti")
+    outputs.dir outDir
+
+    doLast {
+        outDir.deleteDir()
+        outDir.mkdirs()
+
+        // ler key parts
+        def parts = file("$buildDir/anti/key_parts.meta").readLines()
+
+        // cria N classes KeyPart0..N
+        parts.eachWithIndex { part, idx ->
+
+            def className = "KeyPart${idx}"
+            def packageName = "fasofts.element.sysdata"
+            def javaSrcDir = new File("$buildDir/generated/source/dynamicClasses/")
+
+            def pkgPath = new File(javaSrcDir, packageName.replace(".", "/"))
+            pkgPath.mkdirs()
+
+            def fileK = new File(pkgPath, "${className}.java")
+
+            def code = """
+package ${packageName};
+
+public class ${className} {
+    public static String getKPart() {
+        return "${part.replace("\"", "\\\"")}";
+    }
+}
+"""
+            fileK.text = code
+            println "Generated class: ${packageName}.${className}"
+        }
+
+        // metadata para loader
+        def meta = new File("$buildDir/anti/detector_meta.txt")
+        meta.text = "classes=" + parts.size()
+        println "generateDynamicClasses -> metadata: ${meta.absolutePath}"
+    }
+}
+// ========= END generateDynamicClasses =====================
+
+
+// ========= START injectAssets =====================
+task injectAssets(dependsOn: generateDynamicClasses) {
+    description = "Copia outputs/cache_res_v3.dat para assets/.anti_data (temporario) e copia classes geradas para compilation"
+
+    doLast {
+        // novo nome do payload
+        def outPayload = file("$buildDir/outputs/cache_res_v3.dat")
+        if (!outPayload.exists()) {
+            throw new GradleException("cache_res_v3.dat ausente. Rode encryptPayload.")
+        }
+
+        // novo dir oculto
+        def assetsDir = file("src/main/assets/.anti_data")
+        assetsDir.mkdirs()
+
+        // novo nome
+        def target = new File(assetsDir, "cache_res_v3.dat")
+
+        // copiar para assets oculto
+        java.nio.file.Files.copy(
+            outPayload.toPath(),
+            target.toPath(),
+            java.nio.file.StandardCopyOption.REPLACE_EXISTING
+        )
+        println "injectAssets -> copia para assets oculto: ${target.absolutePath}"
+
+        // copiar classes geradas para src (para compilar)
+        def genSrc = file("$buildDir/generated-src/anti")
+        if (genSrc.exists()) {
+            def dest = file("src/main/java/fasofts/element/.sysdata")
+            copy {
+                from genSrc
+                into dest
+            }
+            println "injectAssets -> classes geradas copiadas para src/main/java (serao compiladas)"
+        } else {
+            println "injectAssets -> geracao de classes nao encontrada em ${genSrc}"
+        }
+    }
+}
+// ========= END injectAssets =====================
+
+    
+    // =====================================================================
+    // ========= ANTI MODDERs integrar tasks ao build =====================
+preBuild.dependsOn injectAssets
+
+// se quiser garantir por variant:
+android.applicationVariants.all { variant ->
+    def assembleTask = variant.assembleProvider
+    // as tasks ja sao dependencia de preBuild, e geralmente suficiente, mas garantir:
+    assembleTask.configure { dependsOn injectAssets }
+}
+    // =====================================================================
+    // ========= END ANTI MODDERs integrar tasks ao build =====================
+   // =====================================================================
+
+
+
+
+
+
+task injectAssetss(dependsOn: encryptPayload) {
+    doLast {
+        def src = file("$buildDir/outputs/cache_res_v3.dat")
+        def dst = file("src/main/assets/.anti_data/cache_res_v3.dat")
+
+        dst.parentFile.mkdirs()
+        src.withInputStream { input ->
+            dst.withOutputStream { out ->
+                out << input
+            }
+        }
+        println "injectAssetss -> cache_res_v3.dat copiado para assets/.anti_data."
+    }
+}
+
+preBuild.dependsOn(injectAssets)
+
+dependencies {
+ //implementation "org.codehaus.groovy:groovy-json:3.0.16"
+ implementation "com.google.android.material:material:1.12.0"
+//implementation platform('com.google.firebase:firebase-bom:34.4.0')
+//implementation 'com.google.firebase:firebase-analytics'
+androidTestImplementation 'androidx.test:rules:1.5.0'
+def room_version = "2.6.1"
+def paging_version = "3.2.1"
+
+implementation 'com.google.android.gms:play-services-ads:22.5.0'  
+implementation 'com.google.android.gms:play-services-auth:20.4.1'  
+implementation 'com.google.guava:guava:32.1.1-android'  
+// https://developer.android.com/studio/write/java8-support  
+// included to fix issues with Android 6 support, issue#563  
+coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")  
+
+fullImplementation 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.21'  
+fullImplementation 'androidx.appcompat:appcompat:1.6.1'  
+fullImplementation 'androidx.core:core-ktx:1.12.0'  
+implementation 'androidx.preference:preference-ktx:1.2.1'  
+fullImplementation 'androidx.constraintlayout:constraintlayout:2.1.4'  
+fullImplementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'  
+fullImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3'  
+fullImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'  
+// LiveData  
+implementation 'androidx.lifecycle:lifecycle-livedata-ktx:2.7.0'  
+
+implementation 'com.google.code.gson:gson:2.10.1'  
+implementation "androidx.room:room-runtime:$room_version"  
+ksp "androidx.room:room-compiler:$room_version"  
+implementation "androidx.room:room-ktx:$room_version"  
+implementation "androidx.room:room-paging:$room_version"  
+
+fullImplementation 'androidx.lifecycle:lifecycle-extensions:2.2.0'  
+fullImplementation 'androidx.lifecycle:lifecycle-viewmodel-ktx:2.7.0'  
+fullImplementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'  
+
+// Pagers Views  
+implementation "androidx.paging:paging-runtime-ktx:$paging_version"  
+fullImplementation 'androidx.fragment:fragment-ktx:1.6.2'  
+implementation 'com.google.android.material:material:1.11.0'  
+fullImplementation 'androidx.viewpager2:viewpager2:1.0.0'  
+fullImplementation 'com.squareup.okhttp3:okhttp:4.12.0'  
+fullImplementation 'com.squareup.okhttp3:okhttp-dnsoverhttps:4.12.0'  
+fullImplementation 'com.squareup.retrofit2:retrofit:2.9.0'  
+fullImplementation 'com.squareup.retrofit2:converter-gson:2.9.0'  
+
+implementation 'com.squareup.okio:okio-jvm:3.9.0'  
+// Glide  
+fullImplementation('com.github.bumptech.glide:glide:4.16.0') {  
+    exclude group: 'glide-parent'  
+}  
+fullImplementation('com.github.bumptech.glide:okhttp3-integration:4.16.0') {  
+    exclude group: 'glide-parent'  
+}  
+
+// Ref: https://stackoverflow.com/a/46638213  
+kspFull 'com.github.bumptech.glide:compiler:4.16.0'  
+
+// Swipe button animation  
+//fullImplementation 'com.facebook.shimmer:0.5.0'  
+  fullImplementation 'com.facebook.shimmer:shimmer:0.5.0'  
+    
+// Koin core  
+download 'io.insert-koin:koin-core:3.5.6'  
+implementation 'io.insert-koin:koin-core:3.5.6'  
+// Koin main (Scope, ViewModel ...)  
+download 'io.insert-koin:koin-android:3.5.6'  
+implementation 'io.insert-koin:koin-android:3.5.6'  
+
+download 'hu.autsoft:krate:2.0.0'  
+implementation 'hu.autsoft:krate:2.0.0'  
+
+// viewBinding without reflection  
+fullImplementation 'com.github.kirich1409:viewbindingpropertydelegate:1.5.9'  
+fullImplementation 'com.github.kirich1409:viewbindingpropertydelegate-noreflection:1.5.9'  
+
+// from: https://jitpack.io/#@fernandoangeli/firestack  
+download 'com.github.celzero:firestack:ee0a5ac71f@aar'  
+websiteImplementation 'com.github.celzero:firestack:ee0a5ac71f@aar'  
+fdroidImplementation 'com.github.celzero:firestack:ee0a5ac71f@aar'  
+// debug symbols for crashlytics  
+playImplementation 'com.github.celzero:firestack:ee0a5ac71f:debug@aar'  
+
+// Work manager  
+implementation('androidx.work:work-runtime-ktx:2.9.0') {  
+    modules {  
+        module("com.google.guava:listenablefuture") {  
+            replacedBy("com.google.guava:guava", "listenablefuture is part of guava")  
+        }  
+    }  
+}  
+
+// for handling IP addresses and subnets, both IPv4 and IPv6  
+// https://seancfoley.github.io/IPAddress/ipaddress.html  
+download 'com.github.seancfoley:ipaddress:5.4.0'  
+implementation 'com.github.seancfoley:ipaddress:5.4.0'  
+
+testImplementation 'junit:junit:4.13.2'  
+androidTestImplementation 'androidx.test.ext:junit:1.1.5'  
+androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'  
+
+//leakCanaryImplementation 'com.squareup.leakcanary:leakcanary-android:2.14'  
+
+fullImplementation 'androidx.navigation:navigation-fragment-ktx:2.7.7'  
+fullImplementation 'androidx.navigation:navigation-ui-ktx:2.7.7'  
+
+fullImplementation 'androidx.biometric:biometric:1.1.0'  
+
+playImplementation 'com.google.android.play:app-update:2.1.0'  
+playImplementation 'com.google.android.play:app-update-ktx:2.1.0'  
+
+// for encrypting wireguard configuration files  
+implementation("androidx.security:security-crypto:1.1.0-alpha06")  
+implementation("androidx.security:security-app-authenticator:1.0.0-alpha03")  
+androidTestImplementation("androidx.security:security-app-authenticator:1.0.0-alpha03")  
+
+// barcode scanner for wireguard  
+fullImplementation 'com.journeyapps:zxing-android-embedded:4.3.0'  
+
+// only using firebase crashlytics experimentally for stability tracking, only in play variant  
+// not in fdroid or website  
+playImplementation 'com.google.firebase:firebase-crashlytics:19.0.0'  
+playImplementation 'com.google.firebase:firebase-crashlytics-ndk:19.0.0'
+
+}
+
+// github.com/michel-kraemer/gradle-download-task/issues/131#issuecomment-464476903
+tasks.register('downloadBlocklists', Download) {
+// def assetsDir = new File(projectDir, 'src/main/assets'
+def assetsDir = android.sourceSets.headless.assets.srcDirs[0]
+def sources = [
+'https://dl.rethinkdns.com/blocklists/filetag.json',
+'https://dl.rethinkdns.com/basicconfig/basicconfig.json',
+'https://dl.rethinkdns.com/rank/rd.txt',
+'https://dl.rethinkdns.com/trie/td.txt',
+]
+src(sources)
+dest assetsDir
+onlyIfModified true
+// or if etag mismatches
+useETag true
+// overwrite older files as determined by last-modified, always
+overwrite true
+}
+tasks.register('downloadDependencies', Copy) {
+dependsOn downloadBlocklists
+from configurations.download
+into "libs"
+    }

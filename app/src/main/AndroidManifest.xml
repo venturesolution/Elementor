@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+   <!-- Android 14+: tipo de FG service que cobre VPN/data sync -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    
+    <!-- https://developer.android.com/about/versions/13/behavior-changes-all#notification-permission -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Allows applications to change network connectivity state -->
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- https://github.com/fernandoangeli/element-app/issues/786 set memtagMode to off -->
+    
+    
+    
+    
+   <!-- Android 11 introduces changes related to package visibility. These changes affect
+    apps only if they target Android 11.
+    https://developer.android.com/training/package-visibility -->
+   <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"/>
+    
+    <!-- Allows the app to perform actions across different users on the device.
+    <uses-permission
+        android:name="android.permission.INTERACT_ACROSS_USERS"
+        tools:ignore="ProtectedPermissions" />-->
+
+    
+    
+    <application
+        android:name=".RethinkDnsApplication"
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:largeHeap="true"
+        android:allowNativeHeapPointerTagging="false"
+        android:memtagMode="off"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        tools:ignore="ForegroundServicePermission">
+        
+        <activity
+            android:name=".ui.PrepareVpnActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <service
+            android:name=".service.BraveVPNService"
+            android:exported="true"
+            android:foregroundServiceType="systemExempted|connectedDevice | dataSync"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:stopWithTask="false">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.net.VpnService.SUPPORTS_ALWAYS_ON"
+                android:value="true" />
+        </service>
+        <service
+            android:name=".service.BraveTileService"
+            android:exported="true"
+            android:icon="@drawable/shield_green"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
+                android:value="true" />
+        </service>
+    </application>
+</manifest>
