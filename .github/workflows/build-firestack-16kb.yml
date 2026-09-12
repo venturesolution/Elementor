@@ -33,10 +33,12 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "ndk;28.2.13676358"
 
-      - name: Install gomobile
+       - name: Install gomobile
+        working-directory: firestack
         run: |
+          go get -tool golang.org/x/mobile/cmd/gobind
           go install golang.org/x/mobile/cmd/gomobile@latest
-          go install golang.org/x/mobile/cmd/gobind@latest
+          go install github.com/felixge/go-patch-overlay@latest
 
       - name: Build Firestack
         working-directory: firestack
