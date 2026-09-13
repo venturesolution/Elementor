@@ -4,82 +4,107 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build-firestack:
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Checkout Firestack
+      - name: Checkout Elementor
+        uses: actions/checkout@v4
+
+      - name: Checkout Firestack exact commit
         uses: actions/checkout@v4
         with:
           repository: celzero/firestack
+          ref: ee0a5ac71fd80625749268d0642ea2a8b1ff3194
           path: firestack
 
-      - name: Setup Go
+      - name: Setup Go 1.22.3
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.8'
+          go-version: "1.22.3"
+          cache: false
 
-      - name: Setup Java
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install NDK 28.2
+      - name: Install NDK 28.2.13676358
         run: |
           yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "ndk;28.2.13676358"
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;28.2.13676358"
 
-       - name: Install gomobile
+      - name: Configure Android environment
+        run: |
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/28.2.13676358" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$ANDROID_SDK_ROOT/ndk/28.2.13676358" >> "$GITHUB_ENV"
+
+      - name: Install exact gomobile
         working-directory: firestack
         run: |
-          go get -tool golang.org/x/mobile/cmd/gobind
-          go install golang.org/x/mobile/cmd/gomobile@latest
-          go install github.com/felixge/go-patch-overlay@latest
-
-      - name: Build Firestack
-        working-directory: firestack
-        run: |
-          export PATH="$(go env GOPATH)/bin:$PATH"
-          export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
-
+          go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20220518205345-8578da9835fd
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          gomobile version || true
           gomobile init
-          make android
 
-      - name: Locate AAR
+      - name: Download dependencies
+        working-directory: firestack
         run: |
-          echo "=== AAR ==="
-          find firestack -type f -name "*.aar" -print
+          go mod download
 
-      - name: Extract and verify native libraries
+      - name: Build Firestack AAR
+        working-directory: firestack
+        env:
+          CGO_ENABLED: "1"
         run: |
-          AAR=$(find firestack -type f -name "*.aar" | head -1)
+          mkdir -p build/intra
 
-          if [ -z "$AAR" ]; then
-            echo "ERRO: AAR não encontrado"
+          gomobile bind -v -a             -androidapi 23             -target=android             -tags=android             -ldflags="-w -s"             -gcflags="-trimpath=${HOME}"             -o build/intra/tun2socks.aar             github.com/celzero/firestack/intra             github.com/celzero/firestack/intra/backend             github.com/celzero/firestack/intra/rnet             github.com/celzero/firestack/intra/settings
+
+      - name: Verify AAR
+        working-directory: firestack
+        run: |
+          test -f build/intra/tun2socks.aar
+          unzip -l build/intra/tun2socks.aar
+          mkdir -p /tmp/firestack-aar
+          unzip -q build/intra/tun2socks.aar -d /tmp/firestack-aar
+
+      - name: Verify ELF 16KB alignment
+        run: |
+          OBJDUMP="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objdump"
+
+          test -x "$OBJDUMP"
+
+          find /tmp/firestack-aar -type f -name "*.so" -print
+
+          FAILED=0
+
+          while IFS= read -r SO; do
+            echo
+            echo "===== $SO ====="
+            "$OBJDUMP" -p "$SO" | grep "LOAD" || true
+
+            if "$OBJDUMP" -p "$SO" | grep -q "2**14"; then
+              echo "OK: 16 KB"
+            else
+              echo "ERRO: alinhamento menor que 16 KB"
+              FAILED=1
+            fi
+          done < <(find /tmp/firestack-aar -type f -name "*.so")
+
+          if [ "$FAILED" -ne 0 ]; then
+            echo "Firestack NÃO está compatível com ELF 16 KB."
             exit 1
           fi
 
-          mkdir -p verify
-          unzip -q "$AAR" -d verify
-
-          echo "=== Native libraries ==="
-          find verify -type f -name "*.so" -print
-
-          echo "=== ELF LOAD ALIGNMENT ==="
-
-          for SO in $(find verify -type f -name "*.so"); do
-            echo
-            echo ">>> $SO"
-            "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objdump" \
-              -p "$SO" | grep -E "LOAD|align"
-          done
+          echo "Firestack ELF 16 KB confirmado."
 
       - name: Upload Firestack AAR
         uses: actions/upload-artifact@v4
         with:
-          name: firestack-16kb-aar
-          path: firestack/**/*.aar
+          name: firestack-ee0a5ac71f-16kb
+          path: firestack/build/intra/tun2socks.aar
