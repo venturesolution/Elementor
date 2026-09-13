@@ -9,17 +9,29 @@ jobs:
 
     steps:
 
+      # ============================================================
+      # FIRESTACK
+      # ============================================================
+
       - name: Checkout Firestack
         uses: actions/checkout@v4
         with:
           repository: celzero/firestack
           path: firestack
 
+      # ============================================================
+      # GO
+      # ============================================================
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.27.0'
           cache: false
+
+      # ============================================================
+      # JAVA
+      # ============================================================
 
       - name: Setup Java
         uses: actions/setup-java@v5
@@ -28,137 +40,308 @@ jobs:
           java-version: '17'
           cache: ''
 
+      # ============================================================
+      # ANDROID SDK
+      # ============================================================
+
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+
+      # ============================================================
+      # ANDROID NDK 28
+      # ============================================================
 
       - name: Install NDK 28.2
         run: |
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "ndk;28.2.13676358"
 
+      # ============================================================
+      # PREPARAR FIRESTACK
+      # ============================================================
+
       - name: Prepare Firestack
         working-directory: firestack
         run: |
-          export PATH="$(go env GOPATH)/bin:$PATH"
+          set -e
+
+          export PATH="$PWD/bin:$(go env GOPATH)/bin:$PATH"
           export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
 
+          echo
           echo "========================================"
-          echo "GO"
+          echo " GO VERSION"
           echo "========================================"
+
           go version
 
+          echo
           echo "========================================"
-          echo "ANDROID NDK"
+          echo " ANDROID NDK"
           echo "========================================"
+
           echo "$ANDROID_NDK_HOME"
 
+          echo
           echo "========================================"
-          echo "ADDING GOBIND TO MODULE"
+          echo " FIRESTACK GO.MOD"
           echo "========================================"
 
-          go get -tool golang.org/x/mobile/cmd/gobind@latest
-
-          echo "=== go.mod AFTER go get -tool ==="
           cat go.mod
 
+          echo
           echo "========================================"
-          echo "GO MOD TIDY"
-          echo "========================================"
-
-          go mod tidy
-
-          echo "=== go.mod AFTER tidy ==="
-          cat go.mod
-
-          echo "========================================"
-          echo "VERIFY GOBIND"
+          echo " X/MOBILE DEPENDENCY"
           echo "========================================"
 
-          go list -m all | grep 'golang.org/x/mobile' || true
+          MOBILE_VERSION=$(go list -m -f '{{.Version}}' golang.org/x/mobile)
 
-          go tool gobind -h >/dev/null
+          echo "golang.org/x/mobile = $MOBILE_VERSION"
 
-          echo "gobind OK"
+          if [ -z "$MOBILE_VERSION" ] || [ "$MOBILE_VERSION" = "<nil>" ]; then
+            echo "ERRO: golang.org/x/mobile não encontrado."
+            exit 1
+          fi
+
+          echo
+          echo "========================================"
+          echo " INSTALL GOMOBILE"
+          echo "========================================"
+
+          GOBIN="$PWD/bin" go install \
+            golang.org/x/mobile/cmd/gomobile@"$MOBILE_VERSION"
+
+          echo
+          echo "========================================"
+          echo " INSTALL GOBIND"
+          echo "========================================"
+
+          GOBIN="$PWD/bin" go install \
+            golang.org/x/mobile/cmd/gobind@"$MOBILE_VERSION"
+
+          echo
+          echo "========================================"
+          echo " VERIFY GOMOBILE"
+          echo "========================================"
+
+          "$PWD/bin/gomobile" version || true
+
+          echo
+          echo "========================================"
+          echo " VERIFY GOBIND"
+          echo "========================================"
+
+          "$PWD/bin/gobind" -h >/dev/null
+
+          echo
+          echo "GOMOBILE/GOBIND OK"
+
+      # ============================================================
+      # BUILD FIRESTACK
+      # ============================================================
 
       - name: Build Firestack
         working-directory: firestack
         run: |
-          export PATH="$(go env GOPATH)/bin:$PATH"
+          set -e
+
+          export PATH="$PWD/bin:$(go env GOPATH)/bin:$PATH"
           export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
 
+          echo
           echo "========================================"
-          echo "BUILD FIRESTACK"
+          echo " BUILD FIRESTACK"
+          echo "========================================"
+
+          echo "Go:"
+          go version
+
+          echo
+          echo "NDK:"
+          echo "$ANDROID_NDK_HOME"
+
+          echo
+          echo "PATH:"
+          echo "$PATH"
+
+          echo
+          echo "GOMOBILE:"
+          command -v gomobile
+          gomobile version || true
+
+          echo
+          echo "GOBIND:"
+          command -v gobind
+
+          echo
+          echo "========================================"
+          echo " MAKE ANDROID"
           echo "========================================"
 
           make android
 
+      # ============================================================
+      # LOCALIZAR AAR
+      # ============================================================
+
       - name: Locate AAR
         run: |
-          echo "=== AAR ==="
+          set -e
+
+          echo
+          echo "========================================"
+          echo " FIRESTACK AAR"
+          echo "========================================"
 
           find firestack -type f -name "*.aar" -print
 
           AAR=$(find firestack -type f -name "*.aar" | head -1)
 
           if [ -z "$AAR" ]; then
-            echo "ERRO: AAR não encontrado"
+            echo
+            echo "ERRO: AAR não encontrado."
             exit 1
           fi
 
-          echo "AAR:"
+          echo
+          echo "AAR encontrado:"
           echo "$AAR"
 
-      - name: Verify 16KB ELF alignment
+      # ============================================================
+      # EXTRAIR AAR
+      # ============================================================
+
+      - name: Extract AAR
         run: |
           set -e
 
           AAR=$(find firestack -type f -name "*.aar" | head -1)
+
+          if [ -z "$AAR" ]; then
+            echo "ERRO: AAR não encontrado."
+            exit 1
+          fi
 
           rm -rf verify
           mkdir -p verify
 
           unzip -q "$AAR" -d verify
 
+          echo
+          echo "========================================"
+          echo " NATIVE LIBRARIES"
+          echo "========================================"
+
+          find verify -type f -name "*.so" -print
+
+      # ============================================================
+      # VERIFICAR ELF 16 KB
+      # ============================================================
+
+      - name: Verify 16KB ELF alignment
+        run: |
+          set -e
+
           LLVM_OBJDUMP="$ANDROID_SDK_ROOT/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objdump"
 
+          if [ ! -x "$LLVM_OBJDUMP" ]; then
+            echo
+            echo "ERRO: llvm-objdump não encontrado:"
+            echo "$LLVM_OBJDUMP"
+            exit 1
+          fi
+
+          echo
+          echo "========================================"
+          echo " ELF LOAD ALIGNMENT"
+          echo "========================================"
+
           FAILED=0
+          LIB_COUNT=0
 
           while IFS= read -r SO; do
 
+            LIB_COUNT=$((LIB_COUNT + 1))
+
             echo
-            echo "========================================"
+            echo "----------------------------------------"
+            echo "Biblioteca:"
             echo "$SO"
-            echo "========================================"
+            echo "----------------------------------------"
 
             OUTPUT=$("$LLVM_OBJDUMP" -p "$SO" | grep "LOAD" || true)
 
             echo "$OUTPUT"
 
+            if [ -z "$OUTPUT" ]; then
+              echo "ERRO: nenhum LOAD encontrado."
+              FAILED=1
+              continue
+            fi
+
+            echo
+            echo "Alinhamentos encontrados:"
+
+            echo "$OUTPUT" |
+              grep -o 'align 2\*\*[0-9]*' |
+              sort -u || true
+
+            # 2**12 = 4 KB
             if echo "$OUTPUT" | grep -q "align 2\*\*12"; then
-              echo "ERRO: alinhamento 4 KB"
+              echo "ERRO: alinhamento de 4 KB detectado!"
               FAILED=1
             fi
 
+            # 2**14 = 16 KB
             if echo "$OUTPUT" | grep -q "align 2\*\*14"; then
-              echo "OK: alinhamento 16 KB"
+              echo "OK: alinhamento de 16 KB detectado."
             else
-              echo "ERRO: alinhamento 16 KB não encontrado"
+              echo "ERRO: alinhamento 2**14 (16 KB) não encontrado!"
               FAILED=1
             fi
 
           done < <(find verify -type f -name "*.so")
 
+          echo
+          echo "========================================"
+          echo " RESULTADO"
+          echo "========================================"
+
+          echo "Bibliotecas verificadas: $LIB_COUNT"
+
+          if [ "$LIB_COUNT" -eq 0 ]; then
+            echo "ERRO: nenhuma biblioteca .so encontrada."
+            exit 1
+          fi
+
           if [ "$FAILED" -ne 0 ]; then
             echo
-            echo "FALHA: Firestack não está 100% alinhado em 16 KB."
+            echo "========================================"
+            echo " FALHA"
+            echo "========================================"
+            echo
+            echo "Uma ou mais bibliotecas não estão"
+            echo "corretamente alinhadas para páginas de 16 KB."
+            echo
             exit 1
           fi
 
           echo
-          echo "SUCESSO: Firestack alinhado em 16 KB."
+          echo "========================================"
+          echo " SUCESSO"
+          echo "========================================"
+          echo
+          echo "Todas as bibliotecas ELF estão alinhadas"
+          echo "em 16 KB."
+          echo
+
+      # ============================================================
+      # UPLOAD AAR
+      # ============================================================
 
       - name: Upload Firestack AAR
         uses: actions/upload-artifact@v4
         with:
           name: firestack-16kb-aar
           path: firestack/**/*.aar
+          if-no-files-found: error
