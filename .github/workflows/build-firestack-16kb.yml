@@ -8,9 +8,6 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Checkout Elementor
-        uses: actions/checkout@v4
-
       - name: Checkout Firestack exact commit
         uses: actions/checkout@v4
         with:
@@ -97,7 +94,7 @@ jobs:
           done < <(find /tmp/firestack-aar -type f -name "*.so")
 
           if [ "$FAILED" -ne 0 ]; then
-            echo "Firestack NÃO está compatível com ELF 16 KB."
+            echo "Firestack NAO esta compativel com ELF 16 KB."
             exit 1
           fi
 
